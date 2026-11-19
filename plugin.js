@@ -967,9 +967,14 @@ function heroCard(c) {
 
 /** Load a tab's data (catalog + TMDB). Runs in screenEvent (network is allowed there), NOT in screen().
  *  Returns a plain `view` object the pure renderer draws from. */
+// TMDB's global lists overlap the HDFull index only partly, so each rail scans several pages to fill;
+// the budget is Kino's 20 TMDB calls / 10 s: 9 recent + 3 lists x 3 pages = 18.
+const VIEW_RECENT = 9;
+const VIEW_LIST_PAGES = 3;
+
 async function loadView(tab) {
   const tv = tab === "series";
-  const rec = await recent(null, 14, tv);
+  const rec = await recent(null, VIEW_RECENT, tv);
   const rails = [];
   if (rec.items.length) {
     rails.push({ title: tv ? "Series recién agregadas" : "Recién agregadas a HDFull",
@@ -978,7 +983,7 @@ async function loadView(tab) {
   // More category rows from TMDB (kept to the index), each its own rail — like a real home.
   const ids = tv ? ["trendingTv", "popularTv", "topTv"] : ["trending", "popular", "top"];
   const lists = await Promise.all(ids.map(async (id) => {
-    try { const r = await filtered(LISTS[id].path, {}, 1, tv, 1); return { id, items: r.items }; }
+    try { const r = await filtered(LISTS[id].path, {}, 1, tv, VIEW_LIST_PAGES); return { id, items: r.items }; }
     catch { return { id, items: [] }; }
   }));
   for (const { id, items } of lists) {
