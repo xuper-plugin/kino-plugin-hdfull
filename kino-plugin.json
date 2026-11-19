@@ -1,11 +1,11 @@
 {
   "id": "hdfull-local",
   "name": "HDFull",
-  "version": "0.3.0",
-  "apiVersion": 9,
+  "version": "0.5.0",
+  "apiVersion": 14,
   "entry": "plugin.js",
   "icon": "icon.png",
-  "description": "Películas y series de HDFull en servidores que cargan sin captcha (Vidmoly, Streamtape, Mixdrop). Índice local; títulos y pósters de TMDB.",
+  "description": "Películas y series de HDFull en servidores que cargan sin captcha (Vidmoly, Streamtape, Mixdrop). Catálogo que se actualiza solo y pantalla propia; títulos y pósters de TMDB.",
   "author": "xuper-plugin",
   "categories": [
     "movies",
@@ -16,7 +16,11 @@
     "browse",
     "search",
     "resolve",
-    "episodes"
+    "episodes",
+    "catalog",
+    "screen",
+    "schedule",
+    "storageLarge"
   ],
   "hosts": [
     "vidmoly.biz",
@@ -29,13 +33,34 @@
     "mixdrop.ag",
     "mixdrop.ps",
     "mixdrop.sb",
-    "mixdrop.to"
+    "mixdrop.to",
+    "vidoza.net",
+    "gamovideo.com",
+    "gamovideo.net"
   ],
   "streamHosts": "any",
+  "fetchHosts": "any",
   "section": {
     "label": "HDFull",
     "labelEn": "HDFull"
   },
+  "screen": {
+    "label": "HDFull",
+    "labelEn": "HDFull",
+    "icon": "movie",
+    "menuOpens": "screen",
+    "opensFrom": ["menu", "settings"],
+    "settingsButton": { "label": "Abrir plugin", "labelEn": "Open plugin" },
+    "settingsIn": "both"
+  },
+  "jobs": [
+    {
+      "id": "refresh",
+      "label": { "es": "Actualizar catálogo", "en": "Refresh catalog" },
+      "everyMin": 360,
+      "everyOptions": [180, 360, 720, 1440]
+    }
+  ],
   "discoverable": true,
   "settings": [
     {
