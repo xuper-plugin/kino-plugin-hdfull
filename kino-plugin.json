@@ -1,8 +1,8 @@
 {
   "id": "hdfull-local",
   "name": "HDFull",
-  "version": "0.5.1",
-  "apiVersion": 14,
+  "version": "0.5.2",
+  "apiVersion": 19,
   "entry": "plugin.js",
   "icon": "icon.png",
   "description": "Películas y series de HDFull en servidores que cargan sin captcha (Vidmoly, Streamtape, Mixdrop). Catálogo que se actualiza solo y pantalla propia; títulos y pósters de TMDB.",

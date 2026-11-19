@@ -569,6 +569,9 @@ async function recent(cursor, size, tv) {
 }
 
 export async function home() {
+  // Fresh install (catalog not downloaded yet): contribute no rows instead of throwing. Throwing makes
+  // Kino show "El Inicio no cargó" on the home; the user downloads the catalog from the plugin's screen.
+  if (!catRecentIds("movies").length && !catRecentIds("series").length) return [];
   const defs = [
     ["recent", () => recent(null, HOME_RECENT, false)],
     ["recentTv", () => recent(null, HOME_RECENT, true)],
@@ -584,10 +587,8 @@ export async function home() {
     rows.push({ id, title, ref: "browse:" + id, items: r.value.items,
       genre: /** @type {"peliculas" | "series"} */ (tv ? "series" : "peliculas") });
   });
-  if (!rows.length) {
-    const failed = settled.find((r) => r.status === "rejected");
-    throw failed && failed.status === "rejected" ? failed.reason : kino.error("unavailable", "empty home", { userMessage: t("noStreams") });
-  }
+  // A transient all-TMDB-failure leaves no rows: contribute nothing rather than throwing (which Kino
+  // surfaces as "El Inicio no cargó"); the next home refresh fills it.
   return rows;
 }
 
@@ -904,13 +905,14 @@ export async function resolve(ref) {
 
 const SUPPORT_URL = "https://ko-fi.com/xuperplugins";
 
-/** The "Apoyar" affordance: a QR on TV (a TV can't open a link well), a button on phone/desktop. */
+/** The donation affordance: a QR on TV (a TV can't open a link well), a heart button on phone/desktop. */
 function supportNode(device) {
   if (device === "tv") {
     return { type: "QrImage", value: SUPPORT_URL, size: "large",
-      labelText: "Escanéalo con tu teléfono para apoyar", labelTextEn: "Scan it with your phone to support" };
+      labelText: "Si te gusta mi trabajo, escanéalo y apóyame", labelTextEn: "If you like my work, scan it and support me" };
   }
-  return { type: "TextButton", labelText: "Apoyar", labelTextEn: "Support", onPressed: "support" };
+  return { type: "ElevatedButton", icon: "heart", labelText: "Si te gusta mi trabajo, apóyame",
+    labelTextEn: "If you like my work, support me", onPressed: "support" };
 }
 
 /** First-run gate. Three phases, each with its own progress bar:
@@ -967,29 +969,33 @@ function heroCard(c) {
  *  Returns a plain `view` object the pure renderer draws from. */
 async function loadView(tab) {
   const tv = tab === "series";
-  const rec = await recent(null, 18, tv);
-  const view = { tab, heroes: rec.items.filter((i) => i.backdrop).slice(0, 5), recent: rec.items.slice(0, 30), popular: [] };
-  try {
-    const def = tv ? LISTS.popularTv : LISTS.popular;
-    const pop = await filtered(def.path, {}, 1, tv, 1);
-    view.popular = pop.items.slice(0, 30);
-  } catch { /* skip the extra rail if TMDB is unavailable */ }
-  return view;
+  const rec = await recent(null, 14, tv);
+  const rails = [];
+  if (rec.items.length) {
+    rails.push({ title: tv ? "Series recién agregadas" : "Recién agregadas a HDFull",
+      titleEn: tv ? "Recently added series" : "Recently added", ref: tv ? "browse:recentTv" : "browse:recent", items: rec.items.slice(0, 30) });
+  }
+  // More category rows from TMDB (kept to the index), each its own rail — like a real home.
+  const ids = tv ? ["trendingTv", "popularTv", "topTv"] : ["trending", "popular", "top"];
+  const lists = await Promise.all(ids.map(async (id) => {
+    try { const r = await filtered(LISTS[id].path, {}, 1, tv, 1); return { id, items: r.items }; }
+    catch { return { id, items: [] }; }
+  }));
+  for (const { id, items } of lists) {
+    if (items.length) rails.push({ title: T.es[LISTS[id].key], titleEn: T.en[LISTS[id].key], ref: "browse:" + id, items: items.slice(0, 30) });
+  }
+  return { tab, heroes: rec.items.filter((i) => i.backdrop).slice(0, 5), rails };
 }
 
-/** Pure render of a tab's body from a pre-loaded `view` (no network): hero carousel + title rails. */
+/** Pure render of a tab's body from a pre-loaded `view` (no network): hero carousel + category rails. */
 function browseBodyView(view) {
   const children = [];
-  const v = view || { heroes: [], recent: [], popular: [] };
-  const tv = v.tab === "series";
+  const v = view || { heroes: [], rails: [] };
   if ((v.heroes || []).length) children.push({ type: "PageView", viewportFraction: 0.9, padEnds: false, children: v.heroes.map(heroCard) });
-  if ((v.recent || []).length) {
-    children.push({ type: "titleRail", title: tv ? "Series recién agregadas" : "Recién agregadas a HDFull",
-      titleEn: tv ? "Recently added series" : "Recently added", ref: tv ? "browse:recentTv" : "browse:recent", items: v.recent });
-  }
-  if ((v.popular || []).length) {
-    children.push({ type: "titleRail", title: tv ? "Series populares" : "Películas populares",
-      titleEn: tv ? "Popular series" : "Popular movies", ref: "browse:" + (tv ? "popularTv" : "popular"), items: v.popular });
+  for (const rail of v.rails || []) {
+    if (rail.items && rail.items.length) {
+      children.push({ type: "titleRail", title: rail.title, titleEn: rail.titleEn, ref: rail.ref, items: rail.items });
+    }
   }
   return { type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", gap: 12, children }] };
 }
@@ -1013,11 +1019,13 @@ function richView(state, device) {
         leading: { type: "IconButton", icon: "arrow_back", onPressed: "close_search", labelText: "Cerrar", labelTextEn: "Close" },
         title: { type: "TextField", key: "q", kind: "search", autofocus: true, labelText: "Buscar en HDFull", labelTextEn: "Search HDFull",
           onSubmitted: "search", trailingIcon: "search", trailingLabel: "Buscar", trailingLabelEn: "Search", onTrailingTap: "search" } }
-    : { type: "AppBar", title: "HDFull", actions: [
-        { type: "IconButton", icon: "search", onPressed: "open_search", labelText: "Buscar", labelTextEn: "Search" },
-        { type: "IconButton", icon: "refresh", onPressed: "refresh", labelText: "Actualizar", labelTextEn: "Refresh" },
-        { type: "IconButton", icon: "settings", onPressed: "open_settings", labelText: "Ajustes", labelTextEn: "Settings" },
-      ] };
+    : { type: "AppBar", title: "HDFull", mergeWithKinoBar: true, dense: true,
+        leading: { type: "IconButton", icon: "close", onPressed: "close_screen", labelText: "Cerrar", labelTextEn: "Close" },
+        actions: [
+          { type: "IconButton", icon: "search", onPressed: "open_search", labelText: "Buscar", labelTextEn: "Search" },
+          { type: "IconButton", icon: "refresh", onPressed: "refresh", labelText: "Actualizar", labelTextEn: "Refresh" },
+          { type: "IconButton", icon: "settings", onPressed: "open_settings", labelText: "Ajustes", labelTextEn: "Settings" },
+        ] };
   const tabBar = { type: "TabBar", key: "tab", value: tab === "settings" ? "movies" : tab, onChanged: "tab",
     tabs: [{ value: "movies", label: "Películas", labelEn: "Movies" }, { value: "series", label: "Series", labelEn: "Series" }] };
   const body = tab === "settings" ? settingsBody(device) : browseBodyView(state.view);
@@ -1054,7 +1062,9 @@ export async function screenEvent(ev) {
         if (sGet(CK.assetRaw)) { // an import was in flight: resume it (the gate ticks importTick)
           return { state: { ready: true, importing: true, cursor: Number(sGet(CK.cursor)) || 0, total: Number(sGet(CK.importTotal)) || 0 } };
         }
-        if ((await kino.catalog.count()) === 0) return { state: { ready: true, empty: true } };
+        // Fresh install: auto-start the download so opening the plugin populates it (no manual tap).
+        // If the fetch fails, fetchCatalog flips to the "Descargar catálogo" button to retry.
+        if ((await kino.catalog.count()) === 0) return { state: { ready: true, downloading: true } };
         await applyPending();
         await ensureFresh();
         return { state: await readyState(state.tab || "movies") };
@@ -1085,6 +1095,8 @@ export async function screenEvent(ev) {
       }
       case "support":
         return { go: { url: { href: SUPPORT_URL } } };
+      case "close_screen":
+        return { close: true };
       case "tab": {
         const t = value === "series" ? "series" : value === "settings" ? "settings" : "movies";
         return { state: { searching: false, ...(await readyState(t)) } };
