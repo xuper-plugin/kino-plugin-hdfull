@@ -925,13 +925,15 @@ function gateView(state, device) {
       textEn: "Movies and series that play without a captcha.", style: "p" },
   ];
   let tick = null;
-  if (phase === "downloading") {
+  if (phase === "loading") {
+    children.push({ type: "CircularProgressIndicator", text: "Cargando…", textEn: "Loading…" });
+  } else if (phase === "downloading") {
     children.push({ type: "LinearProgressIndicator",
       labelText: "Descargando catálogo…", labelTextEn: "Downloading catalog…" });
     tick = "fetchCatalog";
   } else if (phase === "importing") {
-    const done = Number(sGet(CK.cursor)) || Number(state.cursor) || 0;
-    const total = Number(sGet(CK.importTotal)) || Number(state.total) || 0;
+    const done = Number(state.cursor) || 0;
+    const total = Number(state.total) || 0;
     children.push({ type: "LinearProgressIndicator", value: total ? Math.min(1, done / total) : 0,
       labelText: `Importando catálogo… ${done} / ${total}`, labelTextEn: `Importing catalog… ${done} / ${total}` });
     tick = "importTick";
@@ -961,24 +963,34 @@ function heroCard(c) {
   };
 }
 
-/** The scrolling body of a tab: a hero carousel of slides + title rails (Kino opens a tapped title). */
-async function browseBody(tv) {
-  const children = [];
+/** Load a tab's data (catalog + TMDB). Runs in screenEvent (network is allowed there), NOT in screen().
+ *  Returns a plain `view` object the pure renderer draws from. */
+async function loadView(tab) {
+  const tv = tab === "series";
   const rec = await recent(null, 18, tv);
-  const heroes = rec.items.filter((i) => i.backdrop).slice(0, 5);
-  if (heroes.length) children.push({ type: "PageView", viewportFraction: 0.9, padEnds: false, children: heroes.map(heroCard) });
-  if (rec.items.length) {
-    children.push({ type: "titleRail", title: tv ? "Series recién agregadas" : "Recién agregadas a HDFull",
-      titleEn: tv ? "Recently added series" : "Recently added", ref: tv ? "browse:recentTv" : "browse:recent", items: rec.items.slice(0, 30) });
-  }
+  const view = { tab, heroes: rec.items.filter((i) => i.backdrop).slice(0, 5), recent: rec.items.slice(0, 30), popular: [] };
   try {
     const def = tv ? LISTS.popularTv : LISTS.popular;
     const pop = await filtered(def.path, {}, 1, tv, 1);
-    if (pop.items.length) {
-      children.push({ type: "titleRail", title: tv ? "Series populares" : "Películas populares",
-        titleEn: tv ? "Popular series" : "Popular movies", ref: "browse:" + (tv ? "popularTv" : "popular"), items: pop.items.slice(0, 30) });
-    }
+    view.popular = pop.items.slice(0, 30);
   } catch { /* skip the extra rail if TMDB is unavailable */ }
+  return view;
+}
+
+/** Pure render of a tab's body from a pre-loaded `view` (no network): hero carousel + title rails. */
+function browseBodyView(view) {
+  const children = [];
+  const v = view || { heroes: [], recent: [], popular: [] };
+  const tv = v.tab === "series";
+  if ((v.heroes || []).length) children.push({ type: "PageView", viewportFraction: 0.9, padEnds: false, children: v.heroes.map(heroCard) });
+  if ((v.recent || []).length) {
+    children.push({ type: "titleRail", title: tv ? "Series recién agregadas" : "Recién agregadas a HDFull",
+      titleEn: tv ? "Recently added series" : "Recently added", ref: tv ? "browse:recentTv" : "browse:recent", items: v.recent });
+  }
+  if ((v.popular || []).length) {
+    children.push({ type: "titleRail", title: tv ? "Series populares" : "Películas populares",
+      titleEn: tv ? "Popular series" : "Popular movies", ref: "browse:" + (tv ? "popularTv" : "popular"), items: v.popular });
+  }
   return { type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", gap: 12, children }] };
 }
 
@@ -992,9 +1004,8 @@ function settingsBody(device) {
   ] }] };
 }
 
-async function richView(arg) {
-  const state = (arg && arg.state) || {};
-  const device = (arg && arg.device) || "phone";
+/** Pure render of the rich view from `state` (its data was loaded by screenEvent into state.view). */
+function richView(state, device) {
   const searching = !!state.searching;
   const tab = state.tab === "series" ? "series" : state.tab === "settings" ? "settings" : "movies";
   const appBar = searching
@@ -1009,19 +1020,27 @@ async function richView(arg) {
       ] };
   const tabBar = { type: "TabBar", key: "tab", value: tab === "settings" ? "movies" : tab, onChanged: "tab",
     tabs: [{ value: "movies", label: "Películas", labelEn: "Movies" }, { value: "series", label: "Series", labelEn: "Series" }] };
-  const body = tab === "settings" ? settingsBody(device) : await browseBody(tab === "series");
+  const body = tab === "settings" ? settingsBody(device) : browseBodyView(state.view);
   return { type: "Scaffold", appBar, body: { type: "Column", children: [tabBar, body] } };
 }
 
+// PURE VIEW: render ONLY from `state`. Kino forbids network/data access here; everything is loaded by
+// screenEvent (the reserved `open` event and the others) and handed back in `state`.
 export async function screen(arg) {
   const state = (arg && arg.state) || {};
   const device = (arg && arg.device) || "phone";
-  const importing = !!sGet(CK.assetRaw); // an import is in flight; survives a reopen mid-import
-  let phase = null;
-  if (importing) phase = "importing";
-  else if ((await kino.catalog.count()) === 0) phase = state.downloading ? "downloading" : "idle";
-  if (phase) return gateView({ ...state, phase }, device);
-  return richView(arg);
+  if (state.downloading) return gateView({ ...state, phase: "downloading" }, device);
+  if (state.importing) return gateView({ ...state, phase: "importing" }, device);
+  if (!state.ready) return gateView({ ...state, phase: "loading" }, device); // the `open` event hasn't loaded yet
+  if (state.empty) return gateView({ ...state, phase: "idle" }, device);
+  return richView(state, device);
+}
+
+/** The "loaded" state patch for a tab: its view data (catalog + TMDB). Runs in screenEvent only. */
+async function readyState(tab) {
+  const t = tab === "series" ? "series" : tab === "settings" ? "settings" : "movies";
+  if (t === "settings") return { ready: true, empty: false, tab: "settings", view: { tab: "settings" } };
+  return { ready: true, empty: false, tab: t, view: await loadView(t) };
 }
 
 export async function screenEvent(ev) {
@@ -1030,13 +1049,23 @@ export async function screenEvent(ev) {
   const state = (ev && ev.state) || {};
   try {
     switch (name) {
+      // The reserved first event: load everything here (network/catalog allowed), hand it back in state.
+      case "open": {
+        if (sGet(CK.assetRaw)) { // an import was in flight: resume it (the gate ticks importTick)
+          return { state: { ready: true, importing: true, cursor: Number(sGet(CK.cursor)) || 0, total: Number(sGet(CK.importTotal)) || 0 } };
+        }
+        if ((await kino.catalog.count()) === 0) return { state: { ready: true, empty: true } };
+        await applyPending();
+        await ensureFresh();
+        return { state: await readyState(state.tab || "movies") };
+      }
       case "download":
         // Flip to the "downloading" phase first so its progress bar renders; the fetch runs on the
         // next tick (a single fetch can't report byte progress, so the bar is indeterminate).
         return { state: { downloading: true } };
       case "fetchCatalog": {
         const c = await fetchCatalog();
-        if (!c) return { state: { downloading: false }, toast: { text: "No se pudo descargar; reintenta", textEn: "Download failed; try again", role: "error" } };
+        if (!c) return { state: { downloading: false, ready: true, empty: true }, toast: { text: "No se pudo descargar; reintenta", textEn: "Download failed; try again", role: "error" } };
         sSet(CK.assetRaw, JSON.stringify(c));
         sDel(CK.cursor);
         sDel(CK.impVer);
@@ -1046,19 +1075,24 @@ export async function screenEvent(ev) {
       }
       case "importTick": {
         const raw = sGet(CK.assetRaw);
-        if (!raw) return { state: { importing: false } };
+        if (!raw) return { state: { importing: false, ...(await readyState(state.tab || "movies")) } };
         const r = await importCatalog(JSON.parse(raw), { batch: UPSERT_BATCH });
-        if (r.done) { sDel(CK.assetRaw); sDel(CK.importTotal); return { state: { importing: false, cursor: r.total, total: r.total } }; }
+        if (r.done) {
+          sDel(CK.assetRaw); sDel(CK.importTotal);
+          return { state: { importing: false, cursor: r.total, total: r.total, ...(await readyState(state.tab || "movies")) } };
+        }
         return { state: { cursor: r.cursor, total: r.total } };
       }
       case "support":
         return { go: { url: { href: SUPPORT_URL } } };
-      case "tab":
-        return { state: { tab: value === "series" ? "series" : value === "settings" ? "settings" : "movies", searching: false } };
+      case "tab": {
+        const t = value === "series" ? "series" : value === "settings" ? "settings" : "movies";
+        return { state: { searching: false, ...(await readyState(t)) } };
+      }
       case "open_search":
         return { state: { searching: true } };
       case "open_settings":
-        return { state: { tab: "settings", searching: false } };
+        return { state: { tab: "settings", searching: false, ready: true, empty: false, view: { tab: "settings" } } };
       case "close_search":
         return { state: { searching: false } };
       case "search": {
@@ -1069,16 +1103,13 @@ export async function screenEvent(ev) {
       case "refresh":
         await applyPending();
         await ensureFresh();
-        return { state: { rev: Date.now() } };
-      case "open":
-        if ((await kino.catalog.count()) > 0) { await applyPending(); await ensureFresh(); }
-        return {};
+        return { state: { ...(await readyState(state.tab || "movies")), rev: Date.now() } };
       default:
         return {};
     }
   } catch (e) {
     try { kino.log("screenEvent " + name + " failed: " + ((e && (e.code || e.message)) || e)); } catch { /* no log */ }
-    return { state: { importing: false } };
+    return { state: { ready: true, importing: false } };
   }
 }
 
