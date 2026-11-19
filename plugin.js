@@ -996,7 +996,7 @@ async function loadView(tab) {
 function browseBodyView(view) {
   const children = [];
   const v = view || { heroes: [], rails: [] };
-  if ((v.heroes || []).length) children.push({ type: "PageView", viewportFraction: 0.9, padEnds: false, children: v.heroes.map(heroCard) });
+  if ((v.heroes || []).length) children.push({ type: "PageView", viewportFraction: 1, children: v.heroes.map(heroCard) });
   for (const rail of v.rails || []) {
     if (rail.items && rail.items.length) {
       children.push({ type: "titleRail", title: rail.title, titleEn: rail.titleEn, ref: rail.ref, items: rail.items });
