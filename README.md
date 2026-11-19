@@ -10,10 +10,10 @@ sin captcha: solo copias en Vidmoly, Streamtape y Mixdrop. Las copias en servido
 
 ## Instalar
 
-En Kino, agrega un plugin por URL y pega:
+En Kino aparece en **Plugins → De la comunidad**: toca Actualizar y busca "HDFull".
+
+También puedes agregarlo por URL pegando:
 
 ```
 https://raw.githubusercontent.com/xuper-plugin/kino-plugin-hdfull/main/kino-plugin.json
 ```
-
-No aparece en la búsqueda de plugins de Kino; se instala solo por esa dirección.

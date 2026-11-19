@@ -36,7 +36,7 @@
     "label": "HDFull",
     "labelEn": "HDFull"
   },
-  "discoverable": false,
+  "discoverable": true,
   "settings": [
     {
       "key": "audio",
