@@ -143,6 +143,8 @@ const CK = {
   ver: "catVersion", at: "catAt", cursor: "catCursor", impVer: "catImportVer",
   recentM: "catRecentM", recentS: "catRecentS", pending: "catPendingDelta", episodes: "catEpisodes",
   assetRaw: "catAssetRaw", // the downloaded catalog.json held across import ticks (storageLarge)
+  genres: "catGenres", // HDFull's own genre map { name: "m:id,s:id,..." } (storageLarge), fetched from genres.json
+  genresAt: "catGenresAt", // when genres were last fetched
   importTotal: "catImportTotal", // total items of the import in flight (for the progress bar)
 };
 const sGet = (k) => { try { return kino.storage.get(k); } catch { return null; } };
@@ -557,15 +559,40 @@ async function filtered(path, params, startPage, tv, maxPages = MAX_TMDB_PAGES) 
   return { items, next: String(page) };
 }
 
+/** Prefixed catalog ids ("m:<id>"/"s:<id>") -> KinoItems, posters/titles from TMDB (cached by Kino). */
+async function idsToItems(ids, tv) {
+  const found = await Promise.all(ids.map((id) => (tv ? showFor : movieFor)(id.slice(2))));
+  const items = [];
+  found.forEach((m, i) => { if (m && m.poster_path) items.push(card(m, ids[i])); });
+  return items;
+}
+
 /** The index's own order (newest first), one page, details from TMDB live. */
 async function recent(cursor, size, tv) {
   const ids = catRecentIds(tv ? "series" : "movies"); // "m:<id>" / "s:<id>", newest first
   const from = Math.max(0, parseInt(cursor || "0", 10) || 0);
   const slice = ids.slice(from, from + size);
-  const found = await Promise.all(slice.map((id) => (tv ? showFor : movieFor)(id.slice(2))));
-  const items = [];
-  found.forEach((m, i) => { if (m && m.poster_path) items.push(card(m, slice[i])); });
+  const items = await idsToItems(slice, tv);
   return { items, next: from + size < ids.length ? String(from + size) : undefined };
+}
+
+/** Download HDFull's genre map (genres.json) and cache it; refetch at most once a day. */
+async function ensureGenres() {
+  const at = Number(sGet(CK.genresAt)) || 0;
+  if (sGet(CK.genres) && Date.now() - at < 86400000) return;
+  const g = await fetchJson(ASSET_BASE + "/genres.json");
+  if (g && g.genres) { sSet(CK.genres, JSON.stringify(g.genres)); sSet(CK.genresAt, String(Date.now())); }
+}
+
+/** The stored HDFull genre map, filtered to the tab's ids that are still in the catalog, biggest first. */
+function genreRailsFor(tv) {
+  let map;
+  try { map = JSON.parse(sGet(CK.genres) || "{}"); } catch { return []; }
+  const prefix = tv ? "s:" : "m:";
+  return Object.keys(map)
+    .map((name) => ({ name, ids: String(map[name]).split(",").filter((id) => id.startsWith(prefix)) }))
+    .filter((g) => g.ids.length >= 6)
+    .sort((a, b) => b.ids.length - a.ids.length);
 }
 
 export async function home() {
@@ -603,6 +630,14 @@ export async function browse(ref, cursor) {
   if (parts[1] === "recent") return recent(cursor, PAGE, false);
   if (parts[1] === "recentTv") return recent(cursor, PAGE, true);
   const page = Math.max(1, parseInt(cursor || "1", 10) || 1);
+  if (parts[1] === "hdgenre") { // "see all" of an HDFull genre row: its catalog titles, paged
+    let map; try { map = JSON.parse(sGet(CK.genres) || "{}"); } catch { map = {}; }
+    const ids = String(map[decodeURIComponent(parts.slice(2).join(":"))] || "").split(",").filter(Boolean);
+    const from = (page - 1) * PAGE;
+    const slice = ids.slice(from, from + PAGE);
+    const items = [...await idsToItems(slice.filter((id) => id[0] === "m"), false), ...await idsToItems(slice.filter((id) => id[0] === "s"), true)];
+    return { items, next: from + PAGE < ids.length ? String(page + 1) : undefined };
+  }
   if (parts[1] === "genre" && /^\d+$/.test(parts[2] || "")) {
     return filtered("/discover/movie", { with_genres: parts[2], sort_by: "popularity.desc", "vote_count.gte": 20 }, page, false);
   }
@@ -967,27 +1002,25 @@ function heroCard(c) {
 
 /** Load a tab's data (catalog + TMDB). Runs in screenEvent (network is allowed there), NOT in screen().
  *  Returns a plain `view` object the pure renderer draws from. */
-// TMDB's global lists overlap the HDFull index only partly, so each rail scans several pages to fill;
-// the budget is Kino's 20 TMDB calls / 10 s: 9 recent + 3 lists x 3 pages = 18.
+// Posters come from TMDB (cached by Kino for 7 days), limited to ~20 fresh calls / 10 s. The first open
+// of a tab fetches this many; genre rails fill in as the cache warms on later opens.
 const VIEW_RECENT = 9;
-const VIEW_LIST_PAGES = 3;
+const VIEW_GENRES = 6;
+const VIEW_GENRE_ITEMS = 10;
 
 async function loadView(tab) {
   const tv = tab === "series";
+  await ensureGenres();
   const rec = await recent(null, VIEW_RECENT, tv);
   const rails = [];
   if (rec.items.length) {
     rails.push({ title: tv ? "Series recién agregadas" : "Recién agregadas a HDFull",
       titleEn: tv ? "Recently added series" : "Recently added", ref: tv ? "browse:recentTv" : "browse:recent", items: rec.items.slice(0, 30) });
   }
-  // More category rows from TMDB (kept to the index), each its own rail — like a real home.
-  const ids = tv ? ["trendingTv", "popularTv", "topTv"] : ["trending", "popular", "top"];
-  const lists = await Promise.all(ids.map(async (id) => {
-    try { const r = await filtered(LISTS[id].path, {}, 1, tv, VIEW_LIST_PAGES); return { id, items: r.items }; }
-    catch { return { id, items: [] }; }
-  }));
-  for (const { id, items } of lists) {
-    if (items.length) rails.push({ title: T.es[LISTS[id].key], titleEn: T.en[LISTS[id].key], ref: "browse:" + id, items: items.slice(0, 30) });
+  // A row per HDFull genre (from genres.json), biggest first. Kino opens a tapped title; "see all" browses the genre.
+  for (const g of genreRailsFor(tv).slice(0, VIEW_GENRES)) {
+    const items = await idsToItems(g.ids.slice(0, VIEW_GENRE_ITEMS), tv);
+    if (items.length) rails.push({ title: g.name, titleEn: g.name, ref: "browse:hdgenre:" + encodeURIComponent(g.name), items });
   }
   return { tab, heroes: rec.items.filter((i) => i.backdrop).slice(0, 5), rails };
 }
