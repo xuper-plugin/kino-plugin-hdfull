@@ -1,0 +1,74 @@
+{
+  "id": "hdfull-local",
+  "name": "HDFull",
+  "version": "0.3.0",
+  "apiVersion": 9,
+  "entry": "plugin.js",
+  "icon": "icon.png",
+  "description": "Películas y series de HDFull en servidores que cargan sin captcha (Vidmoly, Streamtape, Mixdrop). Índice local; títulos y pósters de TMDB.",
+  "author": "xuper-plugin",
+  "categories": [
+    "movies",
+    "series"
+  ],
+  "capabilities": [
+    "home",
+    "browse",
+    "search",
+    "resolve",
+    "episodes"
+  ],
+  "hosts": [
+    "vidmoly.biz",
+    "vidmoly.me",
+    "vidmoly.to",
+    "streamtape.com",
+    "mixdrop.bz",
+    "mxdrop.click",
+    "mixdrop.co",
+    "mixdrop.ag",
+    "mixdrop.ps",
+    "mixdrop.sb",
+    "mixdrop.to"
+  ],
+  "streamHosts": "any",
+  "section": {
+    "label": "HDFull",
+    "labelEn": "HDFull"
+  },
+  "discoverable": false,
+  "settings": [
+    {
+      "key": "audio",
+      "type": "select",
+      "label": "Idioma preferido",
+      "labelEn": "Preferred language",
+      "default": "E",
+      "options": [
+        {
+          "value": "E",
+          "label": "Castellano",
+          "labelEn": "Spanish (Spain)"
+        },
+        {
+          "value": "L",
+          "label": "Latino",
+          "labelEn": "Latin American Spanish"
+        },
+        {
+          "value": "S",
+          "label": "Subtitulado",
+          "labelEn": "Subtitled"
+        }
+      ],
+      "hint": "Esa copia va primera; las demás quedan en el menú Servidor.",
+      "hintEn": "That copy plays first; the rest stay in the Server menu."
+    },
+    {
+      "key": "indexStatus",
+      "type": "status",
+      "label": "Índice",
+      "labelEn": "Index"
+    }
+  ]
+}
