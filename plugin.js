@@ -1020,9 +1020,9 @@ function richView(state, device) {
   const searching = !!state.searching;
   const tab = state.tab === "series" ? "series" : state.tab === "settings" ? "settings" : "movies";
   const appBar = searching
-    ? { type: "AppBar",
+    ? { type: "AppBar", mergeWithKinoBar: true, dense: true,
         leading: { type: "IconButton", icon: "arrow_back", onPressed: "close_search", labelText: "Cerrar", labelTextEn: "Close" },
-        title: { type: "TextField", key: "q", kind: "search", autofocus: true, labelText: "Buscar en HDFull", labelTextEn: "Search HDFull",
+        title: { type: "TextField", key: "q", kind: "search", autofocus: true, hintText: "Buscar en HDFull", hintTextEn: "Search HDFull",
           onSubmitted: "search", trailingIcon: "search", trailingLabel: "Buscar", trailingLabelEn: "Search", onTrailingTap: "search" } }
     : { type: "AppBar", title: "HDFull", mergeWithKinoBar: true, dense: true,
         leading: { type: "IconButton", icon: "close", onPressed: "close_screen", labelText: "Cerrar", labelTextEn: "Close" },
