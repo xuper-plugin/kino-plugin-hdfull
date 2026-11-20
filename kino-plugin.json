@@ -1,7 +1,7 @@
 {
   "id": "hdfull-local",
   "name": "HDFull",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "apiVersion": 20,
   "entry": "plugin.js",
   "icon": "icon.png",
@@ -121,5 +121,6 @@
         "resolve"
       ]
     }
-  }
+  },
+  "resolveAhead": true
 }
