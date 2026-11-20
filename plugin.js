@@ -796,95 +796,31 @@ function goneErr(message) {
   try { /** @type {any} */ (e).gone = true; } catch { /* sealed */ }
   return e;
 }
-const DELETED = /WE ARE SORRY|can't find the (file|video)|file (was|has been) (deleted|removed)|not found|no longer available/i;
 
-// vidmoly answers 404 (with "not found" in the page) to an IP that asked too much, even for files it has: nothing
-// it says is taken as deleted.
-async function page(url, referer, trust404 = true) {
-  const r = await kino.fetch(url, { headers: { "User-Agent": UA, Referer: referer }, timeoutMs: 15000 });
-  if (r.status === 404) throw trust404 ? goneErr("http 404 " + url) : kino.error("unavailable", "suspect http 404 " + url);
-  if (!r.ok) throw kino.error("unavailable", "http " + r.status + " " + url);
-  return r.text();
+// Every hoster embed is resolved by the shared kino-resolver (its provider door), not by HDFull itself.
+// HDFull only builds the embed url (per hoster, below) and translates the door's stream into its own shape.
+// The hosters it indexes are captcha-free (inline), so the door resolves them without the hidden browser.
+async function viaResolver(embedUrl) {
+  let res;
+  try { res = await kino.plugins.call("resolver", "resolve", { url: embedUrl, referer: "https://hdfull.org/" }); }
+  catch (e) { throw kino.error("unavailable", "resolver " + ((e && e.code) || "call failed") + ": " + embedUrl); }
+  const s = (res && Array.isArray(res.streams) ? res.streams : []).find((x) => x && x.url);
+  if (!s) {
+    if (res && res.error === "dead") throw goneErr("dead " + embedUrl);
+    throw kino.error("unavailable", "no stream: " + embedUrl);
+  }
+  const headers = { "User-Agent": UA };
+  if (s.referer) headers.Referer = s.referer;
+  if (Array.isArray(s.headers)) { for (const h of s.headers) if (h && h.name) headers[h.name] = String(h.value); }
+  else if (s.headers && typeof s.headers === "object") Object.assign(headers, s.headers);
+  return { url: s.url, mime: s.kind === "hls" ? "application/x-mpegURL" : "video/mp4", headers, expiresInSeconds: 3600 };
 }
 
-/** vidmoly: the embed page carries the HLS master playlist. */
-async function vidmoly(code) {
-  const html = await page(`https://vidmoly.biz/embed-${code}.html`, "https://hdfull.org/", false);
-  const m = /https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/.exec(html);
-  if (!m) throw kino.error("unavailable", "suspect vidmoly: no playlist for " + code);
-  return {
-    url: m[0],
-    mime: "application/x-mpegURL",
-    headers: { Referer: "https://vidmoly.biz/", Origin: "https://vidmoly.biz", "User-Agent": UA },
-    expiresInSeconds: 3600,
-  };
-}
-
-/** streamtape: the page builds the file URL from two string pieces (the "robotlink"). */
-async function streamtape(code) {
-  const html = await page(`https://streamtape.com/e/${code}`, "https://hdfull.org/");
-  const all = [...html.matchAll(/robotlink'\)\.innerHTML = '([^']+)'\+ \('([^']+)'\)((?:\.substring\(\d+\))+)/g)];
-  const last = all[all.length - 1];
-  if (!last) throw DELETED.test(html) ? goneErr("streamtape: deleted " + code) : kino.error("unavailable", "streamtape: no robotlink for " + code);
-  let tail = last[2];
-  for (const n of last[3].match(/\d+/g) || []) tail = tail.slice(Number(n));
-  return {
-    url: "https:" + last[1] + tail + "&stream=1",
-    mime: "video/mp4",
-    headers: { Referer: "https://streamtape.com/", "User-Agent": UA },
-    expiresInSeconds: 3600,
-  };
-}
-
-/** Dean Edwards' p,a,c,k,e,d packer, undone as text (the packed code is never run). */
-function unpack(html) {
-  const m = /\}\('([\s\S]*?)',(\d+),(\d+),'([\s\S]*?)'\.split\('\|'\)/.exec(html);
-  if (!m) return "";
-  const radix = Number(m[2]);
-  const words = m[4].split("|");
-  const digits = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  const value = (w) => { let n = 0; for (const ch of w) n = n * radix + digits.indexOf(ch); return n; };
-  return m[1].replace(/\b\w+\b/g, (w) => { const i = value(w); return words[i] || w; });
-}
-
-/** mixdrop: the packed player script sets MDCore.wurl to the MP4 (needs a User-Agent, else 403). */
-async function mixdrop(code) {
-  const html = await page(`https://mixdrop.bz/e/${code}`, "https://hdfull.org/");
-  const m = /MDCore\.wurl\s*=\s*"([^"]+)"/.exec(unpack(html));
-  if (!m) throw DELETED.test(html) ? goneErr("mixdrop: deleted " + code) : kino.error("unavailable", "mixdrop: no file for " + code);
-  return {
-    url: m[1].startsWith("//") ? "https:" + m[1] : m[1],
-    mime: "video/mp4",
-    headers: { Referer: "https://mixdrop.bz/", "User-Agent": UA },
-    expiresInSeconds: 3600,
-  };
-}
-
-/** vidoza: the embed page carries a <source src> direct mp4 (no captcha; a plain GET + regex). */
-async function vidoza(code) {
-  const html = await page(`https://vidoza.net/embed-${code}.html`, "https://hdfull.org/");
-  const m = /<source\b[^>]*\bsrc="([^"]+)"/.exec(html);
-  if (!m) throw DELETED.test(html) ? goneErr("vidoza: deleted " + code) : kino.error("unavailable", "vidoza: no source for " + code);
-  return {
-    url: m[1],
-    mime: "video/mp4",
-    headers: { Referer: "https://vidoza.net/", "User-Agent": UA },
-    expiresInSeconds: 3600,
-  };
-}
-
-/** gamovideo: the player sets file:"<mp4>", sometimes inside packed JS (no captcha). */
-async function gamovideo(code) {
-  const html = await page(`https://gamovideo.com/${code}`, "https://hdfull.org/");
-  const m = /file:\s*"([^"]+)"/.exec(unpack(html)) || /file:\s*"([^"]+)"/.exec(html);
-  if (!m) throw DELETED.test(html) ? goneErr("gamovideo: deleted " + code) : kino.error("unavailable", "gamovideo: no file for " + code);
-  return {
-    url: m[1],
-    mime: "video/mp4",
-    headers: { Referer: "https://gamovideo.com/", "User-Agent": UA },
-    expiresInSeconds: 3600,
-  };
-}
+const vidmoly = (code) => viaResolver(`https://vidmoly.biz/embed-${code}.html`);
+const streamtape = (code) => viaResolver(`https://streamtape.com/e/${code}`);
+const mixdrop = (code) => viaResolver(`https://mixdrop.bz/e/${code}`);
+const vidoza = (code) => viaResolver(`https://vidoza.net/embed-${code}.html`);
+const gamovideo = (code) => viaResolver(`https://gamovideo.com/${code}`);
 
 /** True when the host answered that the file is not there (not a network or rate-limit failure). */
 const gone = (e) => !!(e && (e.gone || /^gone /.test(String(e.message || ""))));
