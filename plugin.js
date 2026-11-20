@@ -30,6 +30,7 @@ const T = {
     genre: "Películas de",
     episode: "Episodio",
     noStreams: "Este título no tiene una copia que cargue ahora.",
+    needResolver: "Para reproducir, abre HDFull desde el menú e instala el motor de reproducción que te pedirá.",
     notFound: "No encontramos ese título.",
     tmdbDown: "No se pudo consultar el catálogo. Revisa tu conexión e inténtalo de nuevo.",
     lang: { E: "Castellano", L: "Latino", S: "Subtitulado", O: "Original" },
@@ -48,6 +49,7 @@ const T = {
     genre: "Movies:",
     episode: "Episode",
     noStreams: "This title has no copy that loads right now.",
+    needResolver: "To play, open HDFull from the menu and install the playback engine it asks for.",
     notFound: "We could not find that title.",
     tmdbDown: "Could not load the catalog. Check your connection and try again.",
     lang: { E: "Spanish (Spain)", L: "Latin American Spanish", S: "Subtitled", O: "Original" },
@@ -797,13 +799,25 @@ function goneErr(message) {
   return e;
 }
 
+/** When the resolver isn't installed, every door call fails provider_missing. HDFull has no own extractor to
+ *  fall back on, so tell the person to install it (the one thing they can do, from anywhere they tried to
+ *  play), and tag the error so resolve() stops trying the other copies at once. */
+function resolverMissingError() {
+  const e = kino.error("unavailable", "kino-resolver not installed", { userMessage: t("needResolver") });
+  try { e.resolverMissing = true; } catch { /* sealed */ }
+  return e;
+}
+
 // Every hoster embed is resolved by the shared kino-resolver (its provider door), not by HDFull itself.
 // HDFull only builds the embed url (per hoster, below) and translates the door's stream into its own shape.
 // The hosters it indexes are captcha-free (inline), so the door resolves them without the hidden browser.
 async function viaResolver(embedUrl) {
   let res;
   try { res = await kino.plugins.call("resolver", "resolve", { url: embedUrl, referer: "https://hdfull.org/" }); }
-  catch (e) { throw kino.error("unavailable", "resolver " + ((e && e.code) || "call failed") + ": " + embedUrl); }
+  catch (e) {
+    if (e && e.code === "provider_missing") throw resolverMissingError();
+    throw kino.error("unavailable", "resolver " + ((e && e.code) || "call failed") + ": " + embedUrl);
+  }
   const s = (res && Array.isArray(res.streams) ? res.streams : []).find((x) => x && x.url);
   if (!s) {
     if (res && res.error === "dead") throw goneErr("dead " + embedUrl);
@@ -855,6 +869,7 @@ export async function resolve(ref) {
   const lazy = /^c:([ELSO][vsmog][A-Za-z0-9]{6,40})$/.exec(s);
   if (lazy) {
     try { const st = await play(lazy[1]); notePlayed(lazy[1]); return st; } catch (e) {
+      if (e && e.resolverMissing) throw e;
       noteFailure(lazy[1], e);
       throw kino.error("unavailable", "copy failed", { userMessage: t("noStreams") });
     }
@@ -865,7 +880,7 @@ export async function resolve(ref) {
   const list = ranked(liveCodes(codes));
   for (let i = 0; i < Math.min(list.length, 4); i++) {
     let stream;
-    try { stream = await play(list[i]); notePlayed(list[i]); } catch (e) { noteFailure(list[i], e); continue; }
+    try { stream = await play(list[i]); notePlayed(list[i]); } catch (e) { if (e && e.resolverMissing) throw e; noteFailure(list[i], e); continue; }
     const rest = list.filter((_, j) => j !== i);
     return { ...stream, alternatives: rest.map((c) => ({ label: label(c), ref: "c:" + c })) };
   }
