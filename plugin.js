@@ -875,6 +875,7 @@ export async function resolve(ref) {
 // ---- screen (capability "screen"): gate + rich view ----
 
 const SUPPORT_URL = "https://ko-fi.com/xuperplugins";
+const RESOLVER_REPO = "xuper-plugin/kino-plugin-kino-resolver";
 
 /** The donation affordance: a QR on TV (a TV can't open a link well), a heart button on phone/desktop. */
 function supportNode(device) {
@@ -884,6 +885,25 @@ function supportNode(device) {
   }
   return { type: "ElevatedButton", icon: "heart", labelText: "Si te gusta mi trabajo, apóyame",
     labelTextEn: "If you like my work, support me", onPressed: "support" };
+}
+
+/** The resolver install gate: shown as the first screen while kino-resolver (HDFull delegates every hoster
+ *  to it) is not installed. Once it is, screen() goes on to the catalog gate / rich view. The donate
+ *  affordance sits under the install button, as on every gate. */
+function resolverGateView(device) {
+  return {
+    type: "Scaffold",
+    appBar: { type: "AppBar", title: "HDFull" },
+    body: { type: "Column", mainAxisAlignment: "center", crossAxisAlignment: "center", padding: 24, children: [
+      { type: "Text", text: "Necesitas el motor de reproducción", textEn: "You need the playback engine", style: "h3" },
+      { type: "Text", style: "p",
+        text: "HDFull reproduce a través de Kino Resolver (gratis). Instálalo una vez y sirve para este y para otros plugins de sitios.",
+        textEn: "HDFull plays through Kino Resolver (free). Install it once and it works here and in other site plugins." },
+      { type: "ElevatedButton", labelText: "Instalar Kino Resolver", labelTextEn: "Install Kino Resolver",
+        onPressed: { go: { installPlugin: { repo: RESOLVER_REPO } } } },
+      supportNode(device),
+    ] },
+  };
 }
 
 /** First-run gate. Three phases, each with its own progress bar:
@@ -1009,8 +1029,9 @@ function richView(state, device) {
 // PURE VIEW: render ONLY from `state`. Kino forbids network/data access here; everything is loaded by
 // screenEvent (the reserved `open` event and the others) and handed back in `state`.
 export async function screen(arg) {
-  const state = (arg && arg.state) || {};
   const device = (arg && arg.device) || "phone";
+  if (!(arg && arg.installed && arg.installed[RESOLVER_REPO])) return resolverGateView(device);
+  const state = (arg && arg.state) || {};
   if (state.downloading) return gateView({ ...state, phase: "downloading" }, device);
   if (state.importing) return gateView({ ...state, phase: "importing" }, device);
   if (!state.ready) return gateView({ ...state, phase: "loading" }, device); // the `open` event hasn't loaded yet
