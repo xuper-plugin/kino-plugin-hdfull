@@ -30,7 +30,6 @@ const T = {
     genre: "Películas de",
     episode: "Episodio",
     noStreams: "Este título no tiene una copia que cargue ahora.",
-    needResolver: "Para reproducir, abre HDFull desde el menú e instala el motor de reproducción que te pedirá.",
     notFound: "No encontramos ese título.",
     tmdbDown: "No se pudo consultar el catálogo. Revisa tu conexión e inténtalo de nuevo.",
     lang: { E: "Castellano", L: "Latino", S: "Subtitulado", O: "Original" },
@@ -49,7 +48,6 @@ const T = {
     genre: "Movies:",
     episode: "Episode",
     noStreams: "This title has no copy that loads right now.",
-    needResolver: "To play, open HDFull from the menu and install the playback engine it asks for.",
     notFound: "We could not find that title.",
     tmdbDown: "Could not load the catalog. Check your connection and try again.",
     lang: { E: "Spanish (Spain)", L: "Latin American Spanish", S: "Subtitled", O: "Original" },
@@ -561,11 +559,57 @@ async function filtered(path, params, startPage, tv, maxPages = MAX_TMDB_PAGES) 
   return { items, next: String(page) };
 }
 
-/** Prefixed catalog ids ("m:<id>"/"s:<id>") -> KinoItems, posters/titles from TMDB (cached by Kino). */
+/** Chips that make Latino/Subtitled titles stand out (Castellano is the common default, so no chip). */
+function badgesFromCodes(set) {
+  const b = [];
+  if (set.has("L")) b.push("Latino");
+  if (set.has("S")) b.push("Sub");
+  return b;
+}
+function langsOfCodes(codesStr) {
+  const set = new Set();
+  for (const c of String(codesStr || "").split(",")) if (c) set.add(c[0]);
+  return set;
+}
+/** id -> Set(language letters) for a batch of catalog ids: a movie from its codes, a series from a sample episode. */
+async function langsForIds(ids) {
+  const out = {};
+  const items = await kino.catalog.get(ids);
+  const byId = new Map(items.map((it) => [it.id, it]));
+  const epIds = [];
+  const epOwner = {};
+  for (const id of ids) {
+    const it = byId.get(id);
+    if (!it || !it.data) continue;
+    if (it.data.c) { out[id] = langsOfCodes(it.data.c); continue; }  // movie / episode
+    if (it.data.e) {                                                 // series header: sample its first episode
+      const first = String(it.data.e).split(",")[0];
+      const dot = first.indexOf(".");
+      if (dot > 0) { const epId = `e:${id.slice(2)}:${first.slice(0, dot)}:${first.slice(dot + 1)}`; epIds.push(epId); epOwner[epId] = id; }
+    }
+  }
+  if (epIds.length) {
+    const eps = await kino.catalog.get(epIds);
+    for (const ep of eps) if (ep && ep.data && ep.data.c) out[epOwner[ep.id]] = langsOfCodes(ep.data.c);
+  }
+  return out;
+}
+
+/** Prefixed catalog ids ("m:<id>"/"s:<id>") -> KinoItems, posters/titles from TMDB (cached by Kino),
+ *  each with Latino/Sub language chips from the catalog codes. */
 async function idsToItems(ids, tv) {
-  const found = await Promise.all(ids.map((id) => (tv ? showFor : movieFor)(id.slice(2))));
+  const [found, langs] = await Promise.all([
+    Promise.all(ids.map((id) => (tv ? showFor : movieFor)(id.slice(2)))),
+    langsForIds(ids).catch(() => ({})),
+  ]);
   const items = [];
-  found.forEach((m, i) => { if (m && m.poster_path) items.push(card(m, ids[i])); });
+  found.forEach((m, i) => {
+    if (!m || !m.poster_path) return;
+    const c = card(m, ids[i]);
+    const b = langs[ids[i]] && badgesFromCodes(langs[ids[i]]);
+    if (b && b.length) c.badges = b;
+    items.push(c);
+  });
   return items;
 }
 
@@ -798,43 +842,95 @@ function goneErr(message) {
   try { /** @type {any} */ (e).gone = true; } catch { /* sealed */ }
   return e;
 }
+const DELETED = /WE ARE SORRY|can't find the (file|video)|file (was|has been) (deleted|removed)|not found|no longer available/i;
 
-/** When the resolver isn't installed, every door call fails provider_missing. HDFull has no own extractor to
- *  fall back on, so tell the person to install it (the one thing they can do, from anywhere they tried to
- *  play), and tag the error so resolve() stops trying the other copies at once. */
-function resolverMissingError() {
-  const e = kino.error("unavailable", "kino-resolver not installed", { userMessage: t("needResolver") });
-  try { e.resolverMissing = true; } catch { /* sealed */ }
-  return e;
+// vidmoly answers 404 (with "not found" in the page) to an IP that asked too much, even for files it has: nothing
+// it says is taken as deleted.
+async function page(url, referer, trust404 = true) {
+  const r = await kino.fetch(url, { headers: { "User-Agent": UA, Referer: referer }, timeoutMs: 15000 });
+  if (r.status === 404) throw trust404 ? goneErr("http 404 " + url) : kino.error("unavailable", "suspect http 404 " + url);
+  if (!r.ok) throw kino.error("unavailable", "http " + r.status + " " + url);
+  return r.text();
 }
 
-// Every hoster embed is resolved by the shared kino-resolver (its provider door), not by HDFull itself.
-// HDFull only builds the embed url (per hoster, below) and translates the door's stream into its own shape.
-// The hosters it indexes are captcha-free (inline), so the door resolves them without the hidden browser.
-async function viaResolver(embedUrl) {
-  let res;
-  try { res = await kino.plugins.call("resolver", "resolve", { url: embedUrl, referer: "https://hdfull.org/" }); }
-  catch (e) {
-    if (e && e.code === "provider_missing") throw resolverMissingError();
-    throw kino.error("unavailable", "resolver " + ((e && e.code) || "call failed") + ": " + embedUrl);
-  }
-  const s = (res && Array.isArray(res.streams) ? res.streams : []).find((x) => x && x.url);
-  if (!s) {
-    if (res && res.error === "dead") throw goneErr("dead " + embedUrl);
-    throw kino.error("unavailable", "no stream: " + embedUrl);
-  }
-  const headers = { "User-Agent": UA };
-  if (s.referer) headers.Referer = s.referer;
-  if (Array.isArray(s.headers)) { for (const h of s.headers) if (h && h.name) headers[h.name] = String(h.value); }
-  else if (s.headers && typeof s.headers === "object") Object.assign(headers, s.headers);
-  return { url: s.url, mime: s.kind === "hls" ? "application/x-mpegURL" : "video/mp4", headers, expiresInSeconds: 3600 };
+/** vidmoly: the embed page carries the HLS master playlist. */
+async function vidmoly(code) {
+  const html = await page(`https://vidmoly.biz/embed-${code}.html`, "https://hdfull.org/", false);
+  const m = /https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/.exec(html);
+  if (!m) throw kino.error("unavailable", "suspect vidmoly: no playlist for " + code);
+  return {
+    url: m[0],
+    mime: "application/x-mpegURL",
+    headers: { Referer: "https://vidmoly.biz/", Origin: "https://vidmoly.biz", "User-Agent": UA },
+    expiresInSeconds: 3600,
+  };
 }
 
-const vidmoly = (code) => viaResolver(`https://vidmoly.biz/embed-${code}.html`);
-const streamtape = (code) => viaResolver(`https://streamtape.com/e/${code}`);
-const mixdrop = (code) => viaResolver(`https://mixdrop.bz/e/${code}`);
-const vidoza = (code) => viaResolver(`https://vidoza.net/embed-${code}.html`);
-const gamovideo = (code) => viaResolver(`https://gamovideo.com/${code}`);
+/** streamtape: the page builds the file URL from two string pieces (the "robotlink"). */
+async function streamtape(code) {
+  const html = await page(`https://streamtape.com/e/${code}`, "https://hdfull.org/");
+  const all = [...html.matchAll(/robotlink'\)\.innerHTML = '([^']+)'\+ \('([^']+)'\)((?:\.substring\(\d+\))+)/g)];
+  const last = all[all.length - 1];
+  if (!last) throw DELETED.test(html) ? goneErr("streamtape: deleted " + code) : kino.error("unavailable", "streamtape: no robotlink for " + code);
+  let tail = last[2];
+  for (const n of last[3].match(/\d+/g) || []) tail = tail.slice(Number(n));
+  return {
+    url: "https:" + last[1] + tail + "&stream=1",
+    mime: "video/mp4",
+    headers: { Referer: "https://streamtape.com/", "User-Agent": UA },
+    expiresInSeconds: 3600,
+  };
+}
+
+/** Dean Edwards' p,a,c,k,e,d packer, undone as text (the packed code is never run). */
+function unpack(html) {
+  const m = /\}\('([\s\S]*?)',(\d+),(\d+),'([\s\S]*?)'\.split\('\|'\)/.exec(html);
+  if (!m) return "";
+  const radix = Number(m[2]);
+  const words = m[4].split("|");
+  const digits = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const value = (w) => { let n = 0; for (const ch of w) n = n * radix + digits.indexOf(ch); return n; };
+  return m[1].replace(/\b\w+\b/g, (w) => { const i = value(w); return words[i] || w; });
+}
+
+/** mixdrop: the packed player script sets MDCore.wurl to the MP4 (needs a User-Agent, else 403). */
+async function mixdrop(code) {
+  const html = await page(`https://mixdrop.bz/e/${code}`, "https://hdfull.org/");
+  const m = /MDCore\.wurl\s*=\s*"([^"]+)"/.exec(unpack(html));
+  if (!m) throw DELETED.test(html) ? goneErr("mixdrop: deleted " + code) : kino.error("unavailable", "mixdrop: no file for " + code);
+  return {
+    url: m[1].startsWith("//") ? "https:" + m[1] : m[1],
+    mime: "video/mp4",
+    headers: { Referer: "https://mixdrop.bz/", "User-Agent": UA },
+    expiresInSeconds: 3600,
+  };
+}
+
+/** vidoza: the embed page carries a <source src> direct mp4 (no captcha; a plain GET + regex). */
+async function vidoza(code) {
+  const html = await page(`https://vidoza.net/embed-${code}.html`, "https://hdfull.org/");
+  const m = /<source\b[^>]*\bsrc="([^"]+)"/.exec(html);
+  if (!m) throw DELETED.test(html) ? goneErr("vidoza: deleted " + code) : kino.error("unavailable", "vidoza: no source for " + code);
+  return {
+    url: m[1],
+    mime: "video/mp4",
+    headers: { Referer: "https://vidoza.net/", "User-Agent": UA },
+    expiresInSeconds: 3600,
+  };
+}
+
+/** gamovideo: the player sets file:"<mp4>", sometimes inside packed JS (no captcha). */
+async function gamovideo(code) {
+  const html = await page(`https://gamovideo.com/${code}`, "https://hdfull.org/");
+  const m = /file:\s*"([^"]+)"/.exec(unpack(html)) || /file:\s*"([^"]+)"/.exec(html);
+  if (!m) throw DELETED.test(html) ? goneErr("gamovideo: deleted " + code) : kino.error("unavailable", "gamovideo: no file for " + code);
+  return {
+    url: m[1],
+    mime: "video/mp4",
+    headers: { Referer: "https://gamovideo.com/", "User-Agent": UA },
+    expiresInSeconds: 3600,
+  };
+}
 
 /** True when the host answered that the file is not there (not a network or rate-limit failure). */
 const gone = (e) => !!(e && (e.gone || /^gone /.test(String(e.message || ""))));
@@ -869,7 +965,6 @@ export async function resolve(ref) {
   const lazy = /^c:([ELSO][vsmog][A-Za-z0-9]{6,40})$/.exec(s);
   if (lazy) {
     try { const st = await play(lazy[1]); notePlayed(lazy[1]); return st; } catch (e) {
-      if (e && e.resolverMissing) throw e;
       noteFailure(lazy[1], e);
       throw kino.error("unavailable", "copy failed", { userMessage: t("noStreams") });
     }
@@ -880,7 +975,7 @@ export async function resolve(ref) {
   const list = ranked(liveCodes(codes));
   for (let i = 0; i < Math.min(list.length, 4); i++) {
     let stream;
-    try { stream = await play(list[i]); notePlayed(list[i]); } catch (e) { if (e && e.resolverMissing) throw e; noteFailure(list[i], e); continue; }
+    try { stream = await play(list[i]); notePlayed(list[i]); } catch (e) { noteFailure(list[i], e); continue; }
     const rest = list.filter((_, j) => j !== i);
     return { ...stream, alternatives: rest.map((c) => ({ label: label(c), ref: "c:" + c })) };
   }
@@ -890,7 +985,6 @@ export async function resolve(ref) {
 // ---- screen (capability "screen"): gate + rich view ----
 
 const SUPPORT_URL = "https://ko-fi.com/xuperplugins";
-const RESOLVER_REPO = "xuper-plugin/kino-plugin-kino-resolver";
 
 /** The donation affordance: a QR on TV (a TV can't open a link well), a heart button on phone/desktop. */
 function supportNode(device) {
@@ -900,25 +994,6 @@ function supportNode(device) {
   }
   return { type: "ElevatedButton", icon: "heart", labelText: "Si te gusta mi trabajo, apóyame",
     labelTextEn: "If you like my work, support me", onPressed: "support" };
-}
-
-/** The resolver install gate: shown as the first screen while kino-resolver (HDFull delegates every hoster
- *  to it) is not installed. Once it is, screen() goes on to the catalog gate / rich view. The donate
- *  affordance sits under the install button, as on every gate. */
-function resolverGateView(device) {
-  return {
-    type: "Scaffold",
-    appBar: { type: "AppBar", title: "HDFull" },
-    body: { type: "Column", mainAxisAlignment: "center", crossAxisAlignment: "center", padding: 24, children: [
-      { type: "Text", text: "Necesitas el motor de reproducción", textEn: "You need the playback engine", style: "h3" },
-      { type: "Text", style: "p",
-        text: "HDFull reproduce a través de Kino Resolver (gratis). Instálalo una vez y sirve para este y para otros plugins de sitios.",
-        textEn: "HDFull plays through Kino Resolver (free). Install it once and it works here and in other site plugins." },
-      { type: "ElevatedButton", labelText: "Instalar Kino Resolver", labelTextEn: "Install Kino Resolver",
-        onPressed: { go: { installPlugin: { repo: RESOLVER_REPO } } } },
-      supportNode(device),
-    ] },
-  };
 }
 
 /** First-run gate. Three phases, each with its own progress bar:
@@ -1044,9 +1119,8 @@ function richView(state, device) {
 // PURE VIEW: render ONLY from `state`. Kino forbids network/data access here; everything is loaded by
 // screenEvent (the reserved `open` event and the others) and handed back in `state`.
 export async function screen(arg) {
-  const device = (arg && arg.device) || "phone";
-  if (!(arg && arg.installed && arg.installed[RESOLVER_REPO])) return resolverGateView(device);
   const state = (arg && arg.state) || {};
+  const device = (arg && arg.device) || "phone";
   if (state.downloading) return gateView({ ...state, phase: "downloading" }, device);
   if (state.importing) return gateView({ ...state, phase: "importing" }, device);
   if (!state.ready) return gateView({ ...state, phase: "loading" }, device); // the `open` event hasn't loaded yet
