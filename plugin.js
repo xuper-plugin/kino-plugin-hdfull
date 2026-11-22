@@ -958,13 +958,20 @@ function supportNode(device) {
     labelTextEn: "If you like my work, support me", onPressed: "support" };
 }
 
+/** A gate's bar merged into Kino's own (one bar: Close + "HDFull"), like the rich view's, so the
+ *  gates never draw a second "HDFull" bar under Kino's. */
+function gateBar() {
+  return { type: "AppBar", title: "HDFull", mergeWithKinoBar: true, dense: true,
+    leading: { type: "IconButton", icon: "close", onPressed: "close_screen", labelText: "Cerrar", labelTextEn: "Close" } };
+}
+
 /** The resolver install gate: shown as the first screen while kino-resolver (HDFull delegates every hoster
  *  to it) is not installed. Once it is, screen() goes on to the catalog gate / rich view. The donate
  *  affordance sits under the install button, as on every gate. */
 function resolverGateView(device) {
   return {
     type: "Scaffold",
-    appBar: { type: "AppBar", title: "HDFull" },
+    appBar: gateBar(),
     body: { type: "Column", mainAxisAlignment: "center", crossAxisAlignment: "center", padding: 24, children: [
       { type: "Text", text: "Necesitas el motor de reproducción", textEn: "You need the playback engine", style: "h3" },
       { type: "Text", style: "p",
@@ -1007,7 +1014,7 @@ function gateView(state, device) {
   }
   const tree = {
     type: "Scaffold",
-    appBar: { type: "AppBar", title: "HDFull" },
+    appBar: gateBar(),
     body: { type: "Column", mainAxisAlignment: "center", crossAxisAlignment: "center", padding: 24, children },
   };
   return tick ? { ...tree, every: [{ ms: 1000, event: tick }] } : tree;
