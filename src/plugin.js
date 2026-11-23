@@ -968,9 +968,7 @@ function gateView(state, device) {
       textEn: "Movies and series that play without a captcha.", style: "p" },
   ];
   let tick = null;
-  if (phase === "loading") {
-    children.push({ type: "CircularProgressIndicator", text: "Cargando…", textEn: "Loading…" });
-  } else if (phase === "downloading") {
+  if (phase === "downloading") {
     children.push({ type: "LinearProgressIndicator",
       labelText: "Descargando catálogo…", labelTextEn: "Downloading catalog…" });
     tick = "fetchCatalog";
@@ -1040,7 +1038,8 @@ export async function screen(arg) {
   if (c.installed && c.installed[RESOLVER_REPO] && !settings) {
     if (state.downloading) return gateView({ ...state, phase: "downloading" }, device);
     if (state.importing) return gateView({ ...state, phase: "importing" }, device);
-    if (!state.ready) return gateView({ ...state, phase: "loading" }, device); // the `open` event hasn't answered yet
+    // The `open` event has not answered yet: the standard bar and its skeletons (or the tab kept from the last opening).
+    if (!state.ready) return standard().screen(c);
     if (state.empty) return gateView({ ...state, phase: "idle" }, device);
   }
   return standard().screen(c);
@@ -1066,6 +1065,8 @@ export async function screenEvent(ev) {
         if ((await kino.catalog.count()) === 0) return { state: { ready: true, downloading: true } };
         await applyPending();
         await ensureFresh();
+        // A refresh can start a full re-import (the catalog cleared, the import stashed): the import gate, not an empty list.
+        if (sGet(CK.assetRaw)) return { state: { ready: true, importing: true, cursor: 0, total: Number(sGet(CK.importTotal)) || 0 } };
         return ready(ev);
       }
       case "download":
@@ -1098,6 +1099,11 @@ export async function screenEvent(ev) {
     }
   } catch (e) {
     try { kino.log("screenEvent " + name + " failed: " + ((e && (e.code || e.message)) || e)); } catch { /* no log */ }
+    // A failed `open` shows the tab as failed, so its Retry banner is there (no timer would ever load it otherwise).
+    if (name === "open") {
+      const tab = ev && ev.state && (ev.state.tab === "series" || ev.state.tab === "movies") ? ev.state.tab : "movies";
+      return { state: { ready: true, importing: false, tab, pending: [], failed: { [tab]: true } } };
+    }
     return { state: { ready: true, importing: false } };
   }
 }
