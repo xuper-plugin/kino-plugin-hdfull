@@ -144,6 +144,7 @@ var tabBar = (tabs, active) => ({
 });
 var iconButton = (key, icon, word, onPressed) => ({ type: "IconButton", key, icon, ...twin(word, "labelText"), ...twin(word, "tooltip"), onPressed });
 var searchOpenOps = (tabsInBar) => [
+  { hide: "close" },
   { hide: "brand" },
   { hide: "searchButton" },
   { hide: "settingsButton" },
@@ -156,11 +157,13 @@ var searchClosedOps = (tabsInBar) => [
   { hide: "closeSearch" },
   { hide: "q" },
   { clear: "q" },
+  { show: "close" },
   { show: "brand" },
   { show: "searchButton" },
   { show: "settingsButton" },
   ...tabsInBar ? [{ show: "tabs" }] : []
 ];
+var leaveButton = (cfg2) => cfg2.backArrow ? iconButton("close", "arrow_back", "back", { go: { close: true } }) : iconButton("close", "close", "close", { go: { close: true } });
 function supportNode(device) {
   if (device === "tv") return { type: "QrImage", key: "donate", value: SUPPORT_URL, size: "large", ...twin("supportTv", "labelText") };
   return { type: "ElevatedButton", key: "donate", icon: "heart", ...twin("support", "labelText"), onPressed: { go: { url: { href: SUPPORT_URL } } } };
@@ -230,7 +233,7 @@ function browseView(cfg2, { tab, data, recent: recent2, pending, failed, searchi
   const banner = body.length > 0 && isBanner(body[0]) ? body.shift() : null;
   const tabsInBar = tv && withTabs;
   const appBar = bar({
-    leading: iconButton("close", "close", "close", { go: { close: true } }),
+    leading: leaveButton(cfg2),
     title: { type: "Row", key: "titleRow", gap: tabsInBar ? 24 : 8, crossAxisAlignment: "center", children: [
       { ...iconButton("closeSearch", "arrow_back", "back", { ui: searchClosedOps(tabsInBar), event: "searchClosed" }), hidden: true },
       brand(cfg2),
@@ -250,7 +253,8 @@ function browseView(cfg2, { tab, data, recent: recent2, pending, failed, searchi
       }
     ] },
     actions: [
-      iconButton("searchButton", "search", "search", { ui: searchOpenOps(tabsInBar), event: "searchOpened" }),
+      // barSearch: false (std 1.7.0): the plugin draws its own search field in its page instead of the bar's icon.
+      ...cfg2.barSearch ? [iconButton("searchButton", "search", "search", { ui: searchOpenOps(tabsInBar), event: "searchOpened" })] : [],
       iconButton("settingsButton", "settings", "settings", "openSettings")
     ]
   });
@@ -283,7 +287,10 @@ function resultsView(cfg2, { q, order, names, pending, found, device = "phone" }
     shown++;
     body.push(rail({ items: r.items }, "found-" + i, twin("resultsIn", "title", { name }), cfg2.imageHeaders));
   });
-  if (!pending.length && shown === 0) body.unshift({ type: "Text", key: "noResults", ...twin("noResults") });
+  if (!pending.length && shown === 0 && order.some((r) => {
+    const x = found.get(r);
+    return x && x.ok;
+  })) body.unshift({ type: "Text", key: "noResults", ...twin("noResults") });
   return {
     type: "Scaffold",
     appBar: bar({ leading: iconButton("back", "arrow_back", "back", "back"), title: { type: "Text", key: "resultsTitle", style: "h4", ...twin("resultsTitle", "text", { q }) } }),
@@ -305,7 +312,7 @@ function gateView(cfg2, device = "phone") {
   const name = [cfg2.name, cfg2.nameEn || cfg2.name];
   return {
     type: "Scaffold",
-    appBar: bar({ leading: iconButton("close", "close", "close", { go: { close: true } }), title: brand(cfg2) }),
+    appBar: bar({ leading: leaveButton(cfg2), title: brand(cfg2) }),
     body: { type: "Column", key: "gate", mainAxisAlignment: "center", crossAxisAlignment: "center", padding: 24, gap: 16, children: [
       { type: "Text", key: "gateTitle", style: "h3", ...twin("gateTitle") },
       { type: "Text", key: "gateText", style: "p", ...twin("gateText", "text", { name }) },
@@ -423,8 +430,8 @@ var INFLIGHT_KEY = "std:inflight";
 var INFLIGHT_STALE_MS = 18e3;
 var MAX_META_TICKS = 10;
 var DEFAULT_TABS = [{ id: "inicio", label: "Inicio", labelEn: "Home" }];
-function makeStandardScreen({ kino: kino2, name, nameEn, logo = null, logoAspect = "1:1", needsResolver, hasSettings, tabs, loadTab, homeKey = null, titleOf: titleOf2, typeOf, tmdbPictures = false, imageHeaders = null, searchHere = null, page = null }) {
-  const cfg2 = { name, nameEn, logo, logoAspect, imageHeaders, hasSettings: !!hasSettings, tabs: Array.isArray(tabs) && tabs.length > 0 ? tabs : DEFAULT_TABS };
+function makeStandardScreen({ kino: kino2, name, nameEn, logo = null, logoAspect = "1:1", needsResolver, hasSettings, tabs, loadTab, homeKey = null, titleOf: titleOf2, typeOf, tmdbPictures = false, imageHeaders = null, searchHere = null, page = null, barSearch = true, backArrow = true }) {
+  const cfg2 = { name, nameEn, logo, logoAspect, imageHeaders, hasSettings: !!hasSettings, barSearch: barSearch !== false, backArrow: backArrow !== false, tabs: Array.isArray(tabs) && tabs.length > 0 ? tabs : DEFAULT_TABS };
   const TAB_IDS = cfg2.tabs.map((t2) => t2.id);
   const meta = makeMetaCache({ kino: kino2, titleOf: titleOf2, typeOf, tmdbPictures });
   function slidesFromMeta(rails) {
@@ -647,7 +654,7 @@ function makeStandardScreen({ kino: kino2, name, nameEn, logo = null, logoAspect
         try {
           answers = await searchHere.searchIn(String(state.rq || ""), batch);
         } catch (e) {
-          log("results", e && e.code || "error");
+          log("results", (e && e.code || "error") + " " + String(e && e.message || "").slice(0, 200));
         }
         for (const repo of batch) {
           const a = (Array.isArray(answers) ? answers : []).find((x) => x && x.repo === repo);

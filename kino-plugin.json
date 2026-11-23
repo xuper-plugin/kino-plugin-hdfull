@@ -1,7 +1,7 @@
 {
   "id": "hdfull-local",
   "name": "HDFull",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "apiVersion": 30,
   "entry": "plugin.js",
   "icon": "icon.png",
@@ -165,6 +165,6 @@
   },
   "signature": {
     "authorKey": "6693946bd5c56196960959c4b9665fad5094374bcb85ddb282f8bf762c835263",
-    "value": "99c2ec18cec2a6f2a431dcc66c8b8f5f146ab890915b8f5f31f336e709bd32644aa2a9ac843de821f86c79cc2018754ef02f8b116bc03fa19a037b25b130910c"
+    "value": "304e68a0aae8dc2207791ef16569f10e29f625940353cd9f43ca78adae01572965ee65d6aa85d0cc207e5bee8c8f0fac0fd076f2a9ace217703face13d90600f"
   }
 }
