@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2
+
+- Back closes the search box (the screen declares onBack while searching) instead of the whole screen (std 1.6.1)
+
 ## 0.6.1
 
 - Opening shows the bar and skeletons instead of a spinner; a failed opening and a re-import after a refresh show Retry / the import step; Back closes the search box; a tab Kino cut short offers Retry (std 1.6.0)
