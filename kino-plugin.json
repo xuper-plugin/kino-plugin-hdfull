@@ -1,7 +1,7 @@
 {
   "id": "hdfull-local",
   "name": "HDFull",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "apiVersion": 30,
   "entry": "plugin.js",
   "icon": "icon.png",
@@ -135,5 +135,36 @@
       ]
     }
   },
-  "resolveAhead": true
+  "resolveAhead": true,
+  "provides": {
+    "catalog": {
+      "summary": "Titles this plugin finds, for the author's other plugins",
+      "calls": {
+        "search": {
+          "in": {
+            "q": "string",
+            "type": "string?"
+          },
+          "out": "Item[]"
+        }
+      },
+      "types": {
+        "Item": {
+          "id": "string",
+          "ref": "string",
+          "title": "string",
+          "kind": "string",
+          "poster": "string?",
+          "backdrop": "string?",
+          "year": "string?",
+          "overview": "string?",
+          "tmdb": "number?"
+        }
+      }
+    }
+  },
+  "signature": {
+    "authorKey": "6693946bd5c56196960959c4b9665fad5094374bcb85ddb282f8bf762c835263",
+    "value": "99c2ec18cec2a6f2a431dcc66c8b8f5f146ab890915b8f5f31f336e709bd32644aa2a9ac843de821f86c79cc2018754ef02f8b116bc03fa19a037b25b130910c"
+  }
 }
