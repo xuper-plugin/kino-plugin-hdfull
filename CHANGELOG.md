@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0
+
+- Anime on the Home: three rows tagged as anime, so Kino's «Anime» shelf fills: anime airing this week, popular anime series and anime films (Japanese animation from TMDB, only the titles HDFull has with a copy that plays)
+- The popular anime row's "see all" opens HDFull's own «Anime» section once the screen has downloaded it
+- An anime title appears in its anime row only, so Kino files it as anime and not as a plain series; the recently added rows show 6 titles (a cold Home stays under 20 TMDB calls)
+
 ## 0.6.6
 
 - Categorías: every genre tile now shows a picture (a well-known TMDB backdrop per genre, no extra requests)

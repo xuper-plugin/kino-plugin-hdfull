@@ -30,6 +30,9 @@ const T = {
     topRated: "Películas mejor valoradas",
     topRatedTv: "Series mejor valoradas",
     nowPlaying: "Estrenos",
+    animeAiring: "Anime en emisión",
+    anime: "Anime popular",
+    animeMovies: "Películas de anime",
     genre: "Películas de",
     episode: "Episodio",
     noStreams: "Este título no tiene una copia que cargue ahora.",
@@ -53,6 +56,9 @@ const T = {
     topRated: "Top rated movies",
     topRatedTv: "Top rated series",
     nowPlaying: "New releases",
+    animeAiring: "Airing anime",
+    anime: "Popular anime",
+    animeMovies: "Anime movies",
     genre: "Movies:",
     episode: "Episode",
     noStreams: "This title has no copy that loads right now.",
@@ -554,10 +560,30 @@ const LISTS = {
   top: { path: "/movie/top_rated", key: "topRated" },
   topTv: { path: "/tv/top_rated", key: "topRatedTv", tv: true },
 };
+
+// Anime (owner, 2026-11-24): TMDB has no anime flag, so Japanese-language animation (genre 16 + original language ja),
+// kept to the titles in the index like every list here (the index holds only titles with a captcha-free copy: they play).
+// The index has no "latest episodes" order (a series that gets an episode keeps its place), so what is new is TMDB's:
+// anime with an episode out this week, the most watched first. HDFull's own «Anime» section (genres.json) is the
+// popular row's "see all" once the screen has downloaded it.
+const ANIME = { with_genres: 16, with_original_language: "ja", sort_by: "popularity.desc" };
+const ANIME_AIRING_DAYS = 7;
+/** Anime with an episode out in the last week. The dates move once a day, so the 6-hour page cache keeps working. */
+export function animeAiringParams(now = Date.now()) {
+  const day = (ms) => new Date(ms).toISOString().slice(0, 10);
+  return { ...ANIME, "air_date.gte": day(now - ANIME_AIRING_DAYS * 86400000), "air_date.lte": day(now), "vote_count.gte": 10 };
+}
+const ANIME_LISTS = {
+  animeAiring: { path: "/discover/tv", params: () => animeAiringParams(), tv: true },
+  anime: { path: "/discover/tv", params: () => ({ ...ANIME, "vote_count.gte": 50 }), tv: true },
+  animeMovies: { path: "/discover/movie", params: () => ({ ...ANIME, "vote_count.gte": 50 }), tv: false },
+};
+/** HDFull's own name for its anime section in genres.json. */
+const HD_ANIME = "Anime";
 const PAGE = 20;
 const MAX_TMDB_PAGES = 6;
-// TMDB calls a cold Home may make: 7 + 7 recent titles + 4 list pages = 18, under Kino's 20 per 10 s.
-const HOME_RECENT = 7;
+// TMDB calls a cold Home may make: 6 + 6 recent titles + 4 list pages + 3 anime pages = 19, under Kino's 20 per 10 s.
+const HOME_RECENT = 6;
 const HOME_LISTS = ["trending", "trendingTv", "popular", "popularTv"];
 
 /** Walks TMDB pages from [startPage], keeping only titles in the index, until [PAGE] items or the cap. */
@@ -663,6 +689,8 @@ export async function home() {
   const defs = [
     ["recent", () => recent(null, HOME_RECENT, false)],
     ["recentTv", () => recent(null, HOME_RECENT, true)],
+    // The anime rows come early so Kino's per-plugin Home quota reaches them.
+    ...Object.keys(ANIME_LISTS).map((id) => [id, () => filtered(ANIME_LISTS[id].path, ANIME_LISTS[id].params(), 1, ANIME_LISTS[id].tv, 1)]),
     ...HOME_LISTS.map((id) => [id, () => filtered(LISTS[id].path, {}, 1, !!LISTS[id].tv, 1)]),
   ];
   const settled = await Promise.allSettled(defs.map(([, fn]) => fn()));
@@ -670,6 +698,11 @@ export async function home() {
   settled.forEach((r, i) => {
     if (r.status !== "fulfilled" || !r.value.items.length) return;
     const id = defs[i][0];
+    if (ANIME_LISTS[id]) {
+      const ref = id === "anime" && hdAnimeIds().length ? "browse:hdgenre:" + encodeURIComponent(HD_ANIME) : "browse:" + id;
+      rows.push({ id, title: t(id), ref, items: r.value.items, genre: "anime" });
+      return;
+    }
     const tv = id === "recentTv" || !!(LISTS[id] && LISTS[id].tv);
     const title = id === "recent" || id === "recentTv" ? t(id) : t(LISTS[id].key);
     rows.push({ id, title, ref: "browse:" + id, items: r.value.items,
@@ -677,7 +710,21 @@ export async function home() {
   });
   // A transient all-TMDB-failure leaves no rows: contribute nothing rather than throwing (which Kino
   // surfaces as "El Inicio no cargó"); the next home refresh fills it.
-  return rows;
+  return animeOnlyInAnimeRows(rows);
+}
+
+/** HDFull's own anime ids (genres.json, stored by the screen), or [] before the screen has fetched it. */
+function hdAnimeIds() {
+  try { return String(JSON.parse(sGet(CK.genres) || "{}")[HD_ANIME] || "").split(",").filter(Boolean); } catch { return []; }
+}
+
+/**
+ * A title of an anime row is shown there only: Kino files a title by the first row that brings it, and in "Series en
+ * tendencia" an anime would be a plain series. A row left empty goes. Pure.
+ */
+export function animeOnlyInAnimeRows(rows) {
+  const anime = new Set(rows.filter((r) => r.genre === "anime").flatMap((r) => r.items.map((i) => i.ref)));
+  return rows.map((r) => (r.genre === "anime" ? r : { ...r, items: r.items.filter((i) => !anime.has(i.ref)) })).filter((r) => r.items.length > 0);
 }
 
 export async function section() {
@@ -698,6 +745,10 @@ export async function browse(ref, cursor) {
     const slice = ids.slice(from, from + PAGE);
     const items = [...await idsToItems(slice.filter((id) => id[0] === "m"), false), ...await idsToItems(slice.filter((id) => id[0] === "s"), true)];
     return { items, next: from + PAGE < ids.length ? String(page + 1) : undefined };
+  }
+  if (ANIME_LISTS[parts[1]]) {
+    const def = ANIME_LISTS[parts[1]];
+    return filtered(def.path, def.params(), page, def.tv);
   }
   if (parts[1] === "genre" && /^\d+$/.test(parts[2] || "")) {
     return filtered("/discover/movie", { with_genres: parts[2], sort_by: "popularity.desc", "vote_count.gte": 20 }, page, false);

@@ -800,6 +800,9 @@ var T = {
     topRated: "Pel\xEDculas mejor valoradas",
     topRatedTv: "Series mejor valoradas",
     nowPlaying: "Estrenos",
+    animeAiring: "Anime en emisi\xF3n",
+    anime: "Anime popular",
+    animeMovies: "Pel\xEDculas de anime",
     genre: "Pel\xEDculas de",
     episode: "Episodio",
     noStreams: "Este t\xEDtulo no tiene una copia que cargue ahora.",
@@ -823,6 +826,9 @@ var T = {
     topRated: "Top rated movies",
     topRatedTv: "Top rated series",
     nowPlaying: "New releases",
+    animeAiring: "Airing anime",
+    anime: "Popular anime",
+    animeMovies: "Anime movies",
     genre: "Movies:",
     episode: "Episode",
     noStreams: "This title has no copy that loads right now.",
@@ -1324,9 +1330,21 @@ var LISTS = {
   top: { path: "/movie/top_rated", key: "topRated" },
   topTv: { path: "/tv/top_rated", key: "topRatedTv", tv: true }
 };
+var ANIME = { with_genres: 16, with_original_language: "ja", sort_by: "popularity.desc" };
+var ANIME_AIRING_DAYS = 7;
+function animeAiringParams(now = Date.now()) {
+  const day = (ms) => new Date(ms).toISOString().slice(0, 10);
+  return { ...ANIME, "air_date.gte": day(now - ANIME_AIRING_DAYS * 864e5), "air_date.lte": day(now), "vote_count.gte": 10 };
+}
+var ANIME_LISTS = {
+  animeAiring: { path: "/discover/tv", params: () => animeAiringParams(), tv: true },
+  anime: { path: "/discover/tv", params: () => ({ ...ANIME, "vote_count.gte": 50 }), tv: true },
+  animeMovies: { path: "/discover/movie", params: () => ({ ...ANIME, "vote_count.gte": 50 }), tv: false }
+};
+var HD_ANIME = "Anime";
 var PAGE = 20;
 var MAX_TMDB_PAGES = 6;
-var HOME_RECENT = 7;
+var HOME_RECENT = 6;
 var HOME_LISTS = ["trending", "trendingTv", "popular", "popularTv"];
 async function filtered(path, params, startPage, tv, maxPages = MAX_TMDB_PAGES) {
   const items = [];
@@ -1426,6 +1444,8 @@ async function home() {
   const defs = [
     ["recent", () => recent(null, HOME_RECENT, false)],
     ["recentTv", () => recent(null, HOME_RECENT, true)],
+    // The anime rows come early so Kino's per-plugin Home quota reaches them.
+    ...Object.keys(ANIME_LISTS).map((id) => [id, () => filtered(ANIME_LISTS[id].path, ANIME_LISTS[id].params(), 1, ANIME_LISTS[id].tv, 1)]),
     ...HOME_LISTS.map((id) => [id, () => filtered(LISTS[id].path, {}, 1, !!LISTS[id].tv, 1)])
   ];
   const settled = await Promise.allSettled(defs.map(([, fn]) => fn()));
@@ -1433,6 +1453,11 @@ async function home() {
   settled.forEach((r, i) => {
     if (r.status !== "fulfilled" || !r.value.items.length) return;
     const id = defs[i][0];
+    if (ANIME_LISTS[id]) {
+      const ref = id === "anime" && hdAnimeIds().length ? "browse:hdgenre:" + encodeURIComponent(HD_ANIME) : "browse:" + id;
+      rows.push({ id, title: t(id), ref, items: r.value.items, genre: "anime" });
+      return;
+    }
     const tv = id === "recentTv" || !!(LISTS[id] && LISTS[id].tv);
     const title = id === "recent" || id === "recentTv" ? t(id) : t(LISTS[id].key);
     rows.push({
@@ -1446,7 +1471,18 @@ async function home() {
       )
     });
   });
-  return rows;
+  return animeOnlyInAnimeRows(rows);
+}
+function hdAnimeIds() {
+  try {
+    return String(JSON.parse(sGet(CK.genres) || "{}")[HD_ANIME] || "").split(",").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+function animeOnlyInAnimeRows(rows) {
+  const anime = new Set(rows.filter((r) => r.genre === "anime").flatMap((r) => r.items.map((i) => i.ref)));
+  return rows.map((r) => r.genre === "anime" ? r : { ...r, items: r.items.filter((i) => !anime.has(i.ref)) }).filter((r) => r.items.length > 0);
 }
 async function section() {
   const rows = await home();
@@ -1470,6 +1506,10 @@ async function browse(ref, cursor) {
     const slice = ids.slice(from, from + PAGE);
     const items = [...await idsToItems(slice.filter((id) => id[0] === "m"), false), ...await idsToItems(slice.filter((id) => id[0] === "s"), true)];
     return { items, next: from + PAGE < ids.length ? String(page + 1) : void 0 };
+  }
+  if (ANIME_LISTS[parts[1]]) {
+    const def2 = ANIME_LISTS[parts[1]];
+    return filtered(def2.path, def2.params(), page, def2.tv);
   }
   if (parts[1] === "genre" && /^\d+$/.test(parts[2] || "")) {
     return filtered("/discover/movie", { with_genres: parts[2], sort_by: "popularity.desc", "vote_count.gte": 20 }, page, false);
@@ -1963,6 +2003,8 @@ async function settingsStatus(key) {
 }
 var proto_catalog_search = catalogDoor(search);
 export {
+  animeAiringParams,
+  animeOnlyInAnimeRows,
   applyDelta,
   applyPending,
   browse,
