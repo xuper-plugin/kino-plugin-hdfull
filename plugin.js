@@ -1478,13 +1478,54 @@ async function browse(ref, cursor) {
   if (!def) throw kino.error("not_found", "unknown browse ref: " + ref, { userMessage: t("notFound") });
   return filtered(def.path, {}, page, !!def.tv);
 }
+var TILE_ART_SIZE = "w780";
+var MOVIE_ART = {
+  28: "/gqrnQA6Xppdl8vIb2eJc58VC1tW.jpg",
+  // Action: Mad Max: Fury Road
+  12: "/zPACwR32amTNvzId9qyapCWXYDJ.jpg",
+  // Adventure: Raiders of the Lost Ark
+  16: "/g7CHF8gTLGooTbP4GznIGwaqAGL.jpg",
+  // Animation: Coco
+  35: "/jK65srQczOKTpW62wPxwwKztGgE.jpg",
+  // Comedy: The Grand Budapest Hotel
+  80: "/ejdD20cdHNFAYAN2DlqPToXKyzx.jpg",
+  // Crime: The Godfather
+  99: "/sW7VOrkHKYIeV9PaYc5IqGU2XK8.jpg",
+  // Documentary: My Octopus Teacher
+  18: "/pNjh59JSxChQktamG3LMp9ZoQzp.jpg",
+  // Drama: The Shawshank Redemption
+  10751: "/iJgNOTSBNrC90U2xyYq9ln0b35o.jpg",
+  // Family: Paddington 2
+  14: "/oiwc338EoBgS4sEI2ixAny4KQKg.jpg",
+  // Fantasy: The Fellowship of the Ring
+  36: "/m4MGxxEgAMqIX9x8MCg5pYeyYjU.jpg",
+  // History: The King's Speech
+  27: "/nHRUtBwFNnNN70vcQ7lAsjc2T6S.jpg",
+  // Horror: A Quiet Place
+  10402: "/dcvbs8z0GEXslC1kCT77x19XDeR.jpg",
+  // Music: Bohemian Rhapsody
+  9648: "/4HWAQu28e2yaWrtupFPGFkdNU7V.jpg",
+  // Mystery: Knives Out
+  10749: "/zdXnJqBaGFVtLoPNuMeKfEYUViZ.jpg",
+  // Romance: The Notebook
+  878: "/xJHokMbljvjADYdit5fK5VQsXEG.jpg",
+  // Science Fiction: Interstellar
+  53: "/iWak7wT0j6ycCc8lKr4NBz9c7n5.jpg",
+  // Thriller: Gone Girl
+  10752: "/bdD39MpSVhKjxarTxLSfX6baoMP.jpg",
+  // War: Saving Private Ryan
+  37: "/x4biAVdPVCghBlsVIzB6NmbghIz.jpg"
+  // Western: The Good, the Bad and the Ugly
+};
+var tileArt = (table, genreId) => table[genreId] ? IMG + TILE_ART_SIZE + table[genreId] : void 0;
+var withArt = (tile, art) => art ? { ...tile, art } : tile;
 async function categories() {
   const data = await tmdb("/genre/movie/list");
-  return (data.genres || []).slice(0, 19).map((g) => ({
+  return (data.genres || []).slice(0, 19).map((g) => withArt({
     id: "g" + g.id,
     title: `${t("genre")} ${g.name}`.slice(0, 40),
     ref: "browse:genre:" + g.id
-  }));
+  }, tileArt(MOVIE_ART, g.id)));
 }
 async function search(query) {
   const q = (typeof query === "string" ? query : query && query.q || "").trim();

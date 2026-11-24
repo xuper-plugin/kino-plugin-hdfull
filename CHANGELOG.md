@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.6
+
+- Categorías: every genre tile now shows a picture (a well-known TMDB backdrop per genre, no extra requests)
+
 ## 0.6.5
 
 - Back arrow instead of the X: leaving goes back to where you came from (std 1.7.1)
